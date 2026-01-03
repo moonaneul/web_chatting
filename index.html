@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>M3 Full Chat App</title>
+    <style>
+      body { font-family: -apple-system, sans-serif; margin: 0; background-color: #bacee0; display: flex; flex-direction: column; height: 100vh; }
+      
+      /* 접속자 바 */
+      #user-bar { background: rgba(255, 255, 255, 0.9); padding: 10px 15px; border-bottom: 1px solid #ccc; font-size: 0.9rem; position: sticky; top: 0; z-index: 10; }
+      #user-list-names { color: #007bff; font-weight: bold; }
+
+      /* 메시지 리스트 */
+      #messages { list-style-type: none; margin: 0; padding: 20px; flex-grow: 1; overflow-y: auto; display: flex; flex-direction: column; }
+      
+      .message-wrapper { display: flex; margin-bottom: 15px; max-width: 85%; align-items: flex-end; }
+      .my-wrapper { align-self: flex-end; flex-direction: row; }
+      .other-wrapper { align-self: flex-start; flex-direction: row-reverse; }
+
+      .bubble { padding: 10px 15px; border-radius: 18px; font-size: 0.95rem; line-height: 1.4; word-break: break-all; box-shadow: 0 1px 2px rgba(0,0,0,0.1); display: flex; flex-direction: column; }
+      .my-bubble { background-color: #fee500; border-top-right-radius: 2px; margin-left: 8px; }
+      .other-bubble { background-color: #fff; border-top-left-radius: 2px; margin-right: 8px; }
+
+      .chat-image { max-width: 200px; max-height: 300px; border-radius: 10px; margin-top: 5px; display: block; }
+      .time { font-size: 0.7rem; color: #555; min-width: 55px; text-align: center; }
+      .sender { font-size: 0.75rem; color: #444; margin-bottom: 4px; font-weight: bold; }
+      .system { align-self: center; background-color: rgba(0,0,0,0.1); color: #fff; font-size: 0.8rem; padding: 5px 15px; border-radius: 20px; margin-bottom: 15px; list-style: none; }
+
+      /* 하단 입력바 */
+      #typing-status { padding: 5px 20px; font-size: 0.8rem; color: #555; height: 1.2rem; }
+      #form { background: #fff; padding: 10px; display: flex; border-top: 1px solid #ddd; align-items: center; }
+      #input { border: 1px solid #ddd; padding: 10px 15px; flex-grow: 1; border-radius: 20px; outline: none; }
+      #button { background: #fee500; border: none; padding: 10px 20px; margin-left: 10px; border-radius: 20px; cursor: pointer; font-weight: bold; }
+      #imageBtn { background: none; border: none; font-size: 1.5rem; cursor: pointer; margin-right: 10px; }
+    </style>
+  </head>
+  <body>
+    <div id="user-bar">
+      접속 중: <span id="user-count">0</span>명 (<span id="user-list-names"></span>)
+    </div>
+    <ul id="messages"></ul>
+    <div id="typing-status"></div>
+    <form id="form">
+      <input type="file" id="imageInput" accept="image/*" style="display:none;" />
+      <button type="button" id="imageBtn">📷</button>
+      <input id="input" autocomplete="off" placeholder="메시지를 입력하세요..." />
+      <button id="button">전송</button>
+    </form>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const nickname = prompt('채팅 이름을 입력하세요:', '익명') || '익명';
+      socket.emit('set nickname', nickname);
+
+      const form = document.getElementById('form');
+      const input = document.getElementById('input');
+      const messages = document.getElementById('messages');
+      const typingStatus = document.getElementById('typing-status');
+      const userCount = document.getElementById('user-count');
+      const userListNames = document.getElementById('user-list-names');
+      const imageInput = document.getElementById('imageInput');
+
+      // 1. 메시지 렌더링 함수 (중복 제거를 위해 분리)
+      function renderMessage(data) {
+        if (data.type === 'system') {
+          const li = document.createElement('li');
+          li.classList.add('system');
+          li.textContent = data.msg;
+          messages.appendChild(li);
+        } else {
+          const wrapper = document.createElement('div');
+          wrapper.classList.add('message-wrapper');
+          const time = document.createElement('span');
+          time.classList.add('time');
+          time.textContent = data.time;
+          const bubble = document.createElement('div');
+          bubble.classList.add('bubble');
+
+          if (data.msg) {
+            const textContent = document.createElement('div');
+            textContent.textContent = data.msg;
+            bubble.appendChild(textContent);
+          }
+          if (data.image) {
+            const img = document.createElement('img');
+            img.src = data.image;
+            img.classList.add('chat-image');
+            img.onload = () => messages.scrollTop = messages.scrollHeight;
+            bubble.appendChild(img);
+          }
+
+          if (data.name === nickname) {
+            wrapper.classList.add('my-wrapper');
+            bubble.classList.add('my-bubble');
+            wrapper.appendChild(time);
+            wrapper.appendChild(bubble);
+          } else {
+            wrapper.classList.add('other-wrapper');
+            bubble.classList.add('other-bubble');
+            bubble.innerHTML = `<span class="sender">${data.name}</span>` + bubble.innerHTML;
+            wrapper.appendChild(time);
+            wrapper.appendChild(bubble);
+          }
+          messages.appendChild(wrapper);
+        }
+        messages.scrollTop = messages.scrollHeight;
+      }
+
+      // 2. 서버 이벤트 수신
+      socket.on('chat history', (history) => history.forEach(renderMessage));
+      socket.on('chat message', renderMessage);
+      socket.on('update user list', (users) => {
+        userCount.textContent = users.length;
+        userListNames.textContent = users.join(', ');
+      });
+
+      // 3. 메시지 전송 및 타이핑 로직
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (input.value) {
+          socket.emit('chat message', { name: nickname, msg: input.value });
+          input.value = '';
+          socket.emit('stop typing');
+        }
+      });
+
+      let typing = false;
+      let timeout = undefined;
+      input.addEventListener('input', () => {
+        if (!typing) { typing = true; socket.emit('typing'); }
+        clearTimeout(timeout);
+        timeout = setTimeout(() => { typing = false; socket.emit('stop typing'); }, 1000);
+      });
+
+      socket.on('typing', (data) => { typingStatus.textContent = `${data.name}님이 입력 중...`; });
+      socket.on('stop typing', () => { typingStatus.textContent = ''; });
+
+      // 4. 이미지 처리
+      document.getElementById('imageBtn').onclick = () => imageInput.click();
+      imageInput.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => socket.emit('chat message', { name: nickname, msg: '', image: ev.target.result });
+        reader.readAsDataURL(file);
+      };
+    </script>
+  </body>
+</html>
